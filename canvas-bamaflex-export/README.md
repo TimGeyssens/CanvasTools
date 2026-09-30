@@ -7,6 +7,14 @@ het bestand importeren in BamaFlex en hoeft de lijst niet over te typen.
 Dit is een .NET-project en dus een uitzondering op de conventies van deze repo:
 het heeft een build-stap nodig. Zie de [conventies](../README.md#conventies).
 
+## Schermafbeeldingen
+
+![Verbindingsscherm](docs/verbinden.png)
+
+Dat is het scherm waarmee je begint: URL en token invullen en op **Verbinden**
+klikken. De cursussen, de cijferlijst en de export verschijnen pas na een
+geslaagde verbinding.
+
 ## Vereisten
 
 - **.NET 10 SDK** of later. Controleer met `dotnet --version`.

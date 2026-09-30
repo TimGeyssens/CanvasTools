@@ -15,6 +15,14 @@ Dit was eerst één app met drie pagina's. De andere twee staan nu los:
 - [`canvas-bamaflex-export/`](../canvas-bamaflex-export/) — eindcijfers
   exporteren naar Excel voor BamaFlex.
 
+## Schermafbeeldingen
+
+![Verbindingsscherm](docs/verbinden.png)
+
+Dat is het scherm waarmee je begint: URL en token invullen en op **Verbinden**
+klikken. De upload en de lijst met opgaven verschijnen pas na een geslaagde
+verbinding.
+
 ## Vereisten
 
 - **.NET 10 SDK** of later. Controleer met `dotnet --version`.
