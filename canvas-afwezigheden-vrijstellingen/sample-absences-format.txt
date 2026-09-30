@@ -1,0 +1,35 @@
+Artevelde Absence Export File Format
+=====================================
+
+This tool is designed to work with absence export files from Artevelde.
+
+Expected Excel Format:
+- Row 5: Header row
+- Row 6 onwards: Student absence data
+
+Columns:
+--------
+Column A: naam (Last Name)
+Column B: voornaam (First Name)
+Column C: e-mail (Student email address)
+Column D: Begindatum (Start Date of absence)
+Column E: Einddatum (End Date of absence)
+Column F: Opmerking (Comments)
+Column G: Status wettiging (Legitimation status)
+Column H: Reden (Reason for absence)
+Column I: Ingediend op (Submitted on)
+Column J: Attest (Certificate)
+
+Example:
+--------
+| naam  | voornaam | e-mail                          | Begindatum | Einddatum  | Opmerking | Status wettiging | Reden |
+|-------|----------|---------------------------------|------------|------------|-----------|------------------|-------|
+| Peeters | Jan     | jan.peeters@student.example.be  | 20/01/2026 | 21/01/2026 | ...       | gewettigd       | ziekte |
+
+How it works:
+-------------
+- Student ID is extracted from email (part before @)
+- Student Name is composed from voornaam + naam
+- The tool creates absences for each day from Begindatum to Einddatum (inclusive)
+- Canvas assignments due on any of these dates will be exempted
+- The Reden field is used as the reason for absence
