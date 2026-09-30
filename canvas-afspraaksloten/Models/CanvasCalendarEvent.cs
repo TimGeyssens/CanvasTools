@@ -1,6 +1,6 @@
 using Newtonsoft.Json;
 
-namespace CanvasAfwezighedenVrijstellingen.Models;
+namespace CanvasAfspraaksloten.Models;
 
 public class CanvasCalendarEvent
 {

@@ -1,17 +1,15 @@
-@page "/grade-export"
-@using CanvasAfwezighedenVrijstellingen.Models
-@using CanvasAfwezighedenVrijstellingen.Services
+@page "/"
+@using CanvasBamaflexExport.Models
+@using CanvasBamaflexExport.Services
 @using Microsoft.JSInterop
 @inject CanvasService CanvasService
 @inject ExcelService ExcelService
 @inject IConfiguration Configuration
 @inject IJSRuntime JSRuntime
 
-<PageTitle>Canvas Grade Export to BamaFlex</PageTitle>
+<PageTitle>Canvas Export naar BamaFlex</PageTitle>
 
 <div class="container mt-5">
-    <NavTabs />
-
     <CanvasConnect OnConnected="LoadCourses" />
 
     <h1>Export Canvas Grades to BamaFlex Format</h1>

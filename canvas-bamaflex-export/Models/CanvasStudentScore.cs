@@ -1,4 +1,4 @@
-namespace CanvasAfwezighedenVrijstellingen.Models;
+namespace CanvasBamaflexExport.Models;
 
 public class CanvasStudentScore
 {

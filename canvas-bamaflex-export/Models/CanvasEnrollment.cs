@@ -1,6 +1,6 @@
 using Newtonsoft.Json;
 
-namespace CanvasAfwezighedenVrijstellingen.Models;
+namespace CanvasBamaflexExport.Models;
 
 public class CanvasEnrollment
 {

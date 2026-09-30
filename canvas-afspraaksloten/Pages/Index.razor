@@ -1,14 +1,12 @@
-@page "/calendar-overview"
-@using CanvasAfwezighedenVrijstellingen.Models
-@using CanvasAfwezighedenVrijstellingen.Services
+@page "/"
+@using CanvasAfspraaksloten.Models
+@using CanvasAfspraaksloten.Services
 @inject CanvasService CanvasService
 @inject IConfiguration Configuration
 
-<PageTitle>My calendar slots</PageTitle>
+<PageTitle>Canvas Afspraaksloten</PageTitle>
 
 <div class="container mt-5">
-    <NavTabs />
-
     <CanvasConnect OnConnected="LoadCourses" />
 
     <h1>My calendar slots</h1>
