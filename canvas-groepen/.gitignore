@@ -1,0 +1,3 @@
+canvas-groepen.env
+*.log
+__pycache__/

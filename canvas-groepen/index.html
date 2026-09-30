@@ -1,0 +1,436 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Canvas projectgroepen</title>
+<style>
+  :root { --bg:#f6f7f9; --card:#fff; --line:#e2e5ea; --txt:#1c2333; --mut:#6b7383;
+          --ok:#1a7f4b; --warn:#a86a00; --err:#c0392b; --acc:#2f6fed; }
+  * { box-sizing:border-box; }
+  body { margin:0; font:15px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+         background:var(--bg); color:var(--txt); }
+  .wrap { max-width:1000px; margin:0 auto; padding:24px 16px 60px; }
+  h1 { font-size:22px; margin:0 0 4px; }
+  h2 { font-size:15px; margin:0 0 12px; text-transform:uppercase; letter-spacing:.04em; color:var(--mut); }
+  p.sub { margin:0 0 20px; color:var(--mut); }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:10px;
+          padding:18px; margin-bottom:16px; }
+  .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:12px; }
+  label { display:block; font-size:13px; font-weight:600; margin-bottom:4px; }
+  input[type=text], input[type=password], input[type=number] {
+    width:100%; padding:8px 10px; border:1px solid var(--line); border-radius:6px;
+    font:inherit; background:#fff; }
+  input:focus { outline:2px solid #cfe0ff; border-color:var(--acc); }
+  button { font:inherit; font-weight:600; border:0; border-radius:6px; padding:9px 16px;
+           cursor:pointer; background:var(--acc); color:#fff; }
+  button.ghost { background:#eef1f6; color:var(--txt); }
+  button:disabled { opacity:.5; cursor:not-allowed; }
+  .row { display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+  .drop { border:2px dashed var(--line); border-radius:8px; padding:22px; text-align:center;
+          color:var(--mut); cursor:pointer; }
+  .drop.over { border-color:var(--acc); background:#f4f8ff; }
+  .stats { display:flex; gap:22px; flex-wrap:wrap; margin:0 0 14px; }
+  .stat b { display:block; font-size:20px; }
+  .stat span { font-size:12px; color:var(--mut); text-transform:uppercase; letter-spacing:.04em; }
+  table { width:100%; border-collapse:collapse; font-size:14px; }
+  th,td { text-align:left; padding:7px 8px; border-bottom:1px solid var(--line); vertical-align:top; }
+  th { font-size:12px; text-transform:uppercase; color:var(--mut); letter-spacing:.04em; }
+  td.num { color:var(--mut); width:30px; }
+  .pill { display:inline-block; font-size:12px; padding:1px 8px; border-radius:99px; }
+  .pill.new { background:#e6f0ff; color:var(--acc); }
+  .pill.old { background:#eceff3; color:var(--mut); }
+  .msg { border-radius:8px; padding:10px 12px; font-size:14px; margin-bottom:12px; white-space:pre-wrap; }
+  .msg.ok { background:#e8f6ee; color:var(--ok); }
+  .msg.warn { background:#fdf3e2; color:var(--warn); }
+  .msg.err { background:#fdecea; color:var(--err); }
+  pre { background:#1c2333; color:#e6edf7; padding:14px; border-radius:8px; overflow:auto;
+        font:13px/1.6 ui-monospace,SFMono-Regular,Menlo,monospace; margin:0; }
+  details summary { cursor:pointer; font-size:13px; color:var(--mut); margin-top:10px; }
+  .doclead { font-size:14px; color:var(--mut); margin:10px 0; }
+  .doclead ul { margin:6px 0 10px; padding-left:20px; }
+  .doclead li { margin:3px 0; }
+  code { background:#eef1f6; padding:1px 5px; border-radius:4px; font-size:13px; }
+  table.cols { margin:8px 0 4px; font-size:14px; }
+  table.cols td:first-child { white-space:nowrap; }
+  table.cols td:nth-child(2) { color:var(--mut); white-space:nowrap; }
+  textarea { width:100%; padding:8px 10px; border:1px solid var(--line);
+             border-radius:6px; font:12px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace; }
+  .hide { display:none; }
+  .checks { display:flex; flex-direction:column; gap:6px; margin-top:12px; font-size:14px; }
+  .checks label { font-weight:400; display:flex; gap:8px; align-items:center; }
+  .checks input { width:auto; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Canvas projectgroepen</h1>
+  <p class="sub">Upload je CSV, controleer de verdeling, en zet hem daarna in Canvas.</p>
+
+  <div class="card">
+    <h2>1. Canvas-verbinding</h2>
+    <div class="grid">
+      <div>
+        <label for="baseUrl">Canvas URL</label>
+        <input type="text" id="baseUrl" placeholder="https://school.instructure.com">
+      </div>
+      <div>
+        <label for="courseId">Course ID of code</label>
+        <input type="text" id="courseId" placeholder="12345">
+      </div>
+      <div>
+        <label for="token">API-token</label>
+        <input type="password" id="token" placeholder="blijft alleen in dit tabblad">
+      </div>
+    </div>
+    <div class="row" style="margin-top:12px">
+      <button class="ghost" id="btnVerify">Verbinden</button>
+      <button class="ghost" id="btnWrite">Schrijftoegang testen</button>
+      <span id="verifyMsg" style="font-size:14px;color:var(--mut)">Vul een geldig token in.</span>
+    </div>
+    <details id="tokenDoc">
+      <summary>Waar maak ik een API-token aan?</summary>
+      <ol class="doclead">
+        <li>Open in Canvas je <b>Account</b>-pagina: klik linksonder op je
+            naam of op <b>Account</b> in de voettekst.</li>
+        <li>Kies <b>Instellingen</b> (in het Nederlands: <i>Instellingen</i>)
+            en daarna <b>Geïntegreerde toegang</b> /
+            <i>Geïntegreerde toegang</i>.</li>
+        <li>Klik op <b>+ Nieuw token</b> /
+            <i>Nieuwe toegangstoken genereren</i>.</li>
+        <li>Vul een duidelijke naam in, bijvoorbeeld
+            <code>groepentool laptop</code>, zodat je hem later kunt
+            herkennen en intrekken.</li>
+        <li>Klik <b>Token genereren</b>. <b>Copyeer het meteen</b> — Canvas
+            toont het maar één keer.</li>
+        <li>Plak het hierboven in <b>API-token</b> en klik <b>Verbinden</b>.</li>
+      </ol>
+      <p class="doclead"><b>Rechten.</b> Standaard mag een token alles binnen
+        je eigen account. Wil je hem beperken, zet dan bij het genereren een
+        vinkje bij <i>Beperkte reikwijdte</i> en plak onderstaande reikwijdtes
+        één per regel in het tekstveld.</p>
+      <textarea id="scopes" rows="9" spellcheck="false"></textarea>
+      <div class="row" style="margin-top:8px">
+        <button class="ghost" id="btnCopy">Reikwijdtes kopiëren</button>
+        <span id="copyMsg" style="font-size:13px;color:var(--mut)"></span>
+      </div>
+      <p class="doclead"><b>Token intrekken.</b> Ga terug naar
+        <b>Instellingen → Geïntegreerde toegang</b> en klik op het prullenbakje
+        naast het token. Doe dat zodra je klaar bent met de groepentool.</p>
+    </details>
+  </div>
+
+  <div class="card">
+    <h2>2. Bestand</h2>
+    <div class="drop" id="drop">Klik om je CSV te kiezen, of sleep het bestand hierheen</div>
+    <input type="file" id="file" accept=".csv,text/csv" class="hide">
+    <div id="fileMsg" class="msg ok hide"></div>
+    <details id="csvDoc">
+      <summary>Welke kolommen moet mijn CSV hebben?</summary>
+      <p class="doclead">Eén rij per student. De groep is de waarde in de
+        <code>team_name</code>-kolom: alle rijen met dezelfde groepnaam worden
+        samen één groep in Canvas.</p>
+      <table class="cols">
+        <thead><tr><th>Kolom</th><th>Verplicht</th><th>Wat het doet</th></tr></thead>
+        <tbody>
+          <tr><td><code>team_name</code></td><td>ja</td>
+            <td>Naam van de groep. Wordt de groepnaam in Canvas.</td></tr>
+          <tr><td><code>student_name</code></td><td>ja</td>
+            <td>Volledige naam zoals in Canvas, bijv. <code>X</code>.
+                Wordt gebruikt als er geen id in staat.</td></tr>
+          <tr><td><code>canvas_user_id</code></td><td>aanbevolen</td>
+            <td>Het numerieke Canvas-id. Snelste en meest betrouwbare match.</td></tr>
+          <tr><td><code>sis_user_id</code></td><td>aanbevolen</td>
+            <td>SIS-nummer zoals <code>S153136</code>. Werkt ook als de
+                <code>canvas_user_id</code> verouderd is.</td></tr>
+          <tr><td><code>email</code></td><td>nee</td>
+            <td>Alleen gebruikt om dubbele studenten in je bestand te herkennen.</td></tr>
+          <tr><td><code>group_category</code></td><td>nee</td>
+            <td>Naam van de group set waarin alles komt. Standaard
+                <em>Projectgroepen</em>, en op de pagina aan te passen.</td></tr>
+          <tr><td><code>team_number</code>, <code>section</code>,
+              <code>match_status</code></td><td>nee</td>
+            <td>Worden genegeerd. Je mag ze dus gewoon laten staan.</td></tr>
+        </tbody>
+      </table>
+      <p class="doclead">Tips</p>
+      <ul class="doclead">
+        <li>Koptekstrijen worden niet afgeteld: rij 1 is de kolomnaam.</li>
+        <li>Scheidingsteken mag <code>,</code> <code>;</code> of een tab zijn,
+            en het bestand mag vanuit Excel (BOM) komen.</li>
+        <li>Er is geen kolom nodig voor Canvas; die worden opgezocht in de
+            roosterlijst van de cursus, in deze volgorde:
+            <code>canvas_user_id</code> → <code>sis_user_id</code> → naam.</li>
+        <li>Bij namen wordt accenten en hoofdletters genegeerd, dus
+            <code>Chloe Martin</code> matcht <code>Chloë Martin</code>.</li>
+      </ul>
+      <button class="ghost" id="btnTemplate">Voorbeeld-CSV downloaden</button>
+    </details>
+  </div>
+
+  <div class="card hide" id="previewCard">
+    <h2>3. Controleer de verdeling</h2>
+    <div class="stats" id="stats"></div>
+    <div id="warnBox"></div>
+    <details open>
+      <summary id="toggleTable">Verdeling verbergen</summary>
+      <table>
+        <thead><tr><th></th><th>Groep</th><th>Leden</th><th>Met Canvas-ID</th><th>Zonder ID</th></tr></thead>
+        <tbody id="tbody"></tbody>
+      </table>
+    </details>
+  </div>
+
+  <div class="card hide" id="pushCard">
+    <h2>4. Naar Canvas sturen</h2>
+    <div class="grid">
+      <div>
+        <label for="setName">Group set (map voor alle groepen)</label>
+        <input type="text" id="setName" placeholder="uit je CSV">
+      </div>
+    </div>
+    <div class="checks">
+      <label><input type="checkbox" id="removeExtra"> Studenten die niet in de CSV staan ook uit hun groep halen</label>
+    </div>
+    <div class="row" style="margin-top:14px">
+      <button class="ghost" id="btnDry">Eerst droog proberen</button>
+      <button id="btnPush">Naar Canvas sturen</button>
+    </div>
+    <div id="pushBox" style="margin-top:14px"></div>
+  </div>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+const CACHE = 'canvasGroepenCfg';
+let csv = '';
+
+const cfg = () => ({
+  baseUrl: $('baseUrl').value.trim(),
+  courseId: $('courseId').value.trim(),
+  token: $('token').value.trim()
+});
+
+function saveCfg() {
+  sessionStorage.setItem(CACHE, JSON.stringify(cfg()));
+}
+['baseUrl','courseId','token'].forEach(id =>
+  $(id).addEventListener('change', saveCfg));
+
+const esc = s => String(s == null ? '' : s);
+
+async function post(path, body) {
+  const r = await fetch(path, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ...cfg(), ...body })
+  });
+  return r.json();
+}
+
+function loadFile(file) {
+  const rd = new FileReader();
+  rd.onload = () => {
+    csv = rd.result;
+    $('fileMsg').className = 'msg ok';
+    $('fileMsg').textContent = 'Ingeladen: ' + file.name;
+    preview();
+  };
+  rd.readAsText(file);
+}
+
+$('drop').onclick = () => $('file').click();
+$('file').onchange = e => e.target.files[0] && loadFile(e.target.files[0]);
+['dragover','dragenter'].forEach(ev => $('drop').addEventListener(ev, e => {
+  e.preventDefault(); $('drop').classList.add('over');
+}));
+['dragleave','drop'].forEach(ev => $('drop').addEventListener(ev, e => {
+  e.preventDefault(); $('drop').classList.remove('over');
+}));
+$('drop').addEventListener('drop', e => e.dataTransfer.files[0] && loadFile(e.dataTransfer.files[0]));
+
+$('toggleTable').onclick = e => {
+  const t = document.querySelector('#previewCard details').open;
+  e.target.textContent = t ? 'Verdeling tonen' : 'Verdeling verbergen';
+};
+
+async function preview() {
+  if (!csv) return;
+  const res = await post('/api/preview', { csv });
+  const plan = res.plan;
+  if (!plan) { $('fileMsg').className = 'msg err'; $('fileMsg').textContent = res.error; return; }
+
+  if (plan.missingColumns && plan.missingColumns.length) {
+    $('fileMsg').className = 'msg err';
+    $('fileMsg').textContent = 'Dit bestand kan ik niet lezen.\n' +
+      plan.missingColumns.join('\n') +
+      '\nGevonden kolommen: ' + (plan.headers || []).join(', ');
+    $('previewCard').classList.add('hide');
+    $('pushCard').classList.add('hide');
+    $('csvDoc').open = true;
+    return;
+  }
+
+  const total = plan.teams.reduce((a, t) => a + t.members.length, 0);
+  const ok = plan.teams.reduce((a, t) => a + (t.ok ? t.ok.length : 0), 0);
+  const sizes = plan.teams.map(t => t.members.length);
+
+  $('stats').innerHTML = [
+    ['Groepen', plan.teams.length],
+    ['Studenten', total],
+    ['Grootte', Math.min(...sizes) + '–' + Math.max(...sizes)],
+    ['Worden toegevoegd', res.canvas.connected ? ok : '-'],
+    ['Worden overgeslagen', res.canvas.connected ? total - ok : '-']
+  ].map(([k, v]) => `<div class="stat"><b>${v}</b><span>${k}</span></div>`).join('');
+
+  $('tbody').innerHTML = plan.teams.map((t, i) => {
+    const miss = t.skipped || t.members.filter(m => !m.canvasUserId);
+    return `<tr>
+      <td class="num">${i + 1}</td>
+      <td><b>${esc(t.name)}</b></td>
+      <td>${t.members.map(m => esc(m.name)).join(', ')}</td>
+      <td>${t.ok ? t.ok.length : '-'}</td>
+      <td>${miss.length ? '<span style="color:var(--warn)">' +
+        miss.map(m => esc(m.name)).join(', ') + '</span>' : '-'}</td>
+    </tr>`;
+  }).join('');
+
+  let html = '';
+  if (res.unmatched && res.unmatched.length)
+    html += `<div class="msg warn"><b>Wordt overgeslagen (niet gevonden in de cursus)</b>\n` +
+      res.unmatched.map(esc).join('\n') + '</div>';
+  if (plan.warnings.length)
+    html += `<div class="msg warn"><b>Let op het bestand</b>\n` +
+      plan.warnings.map(esc).join('\n') + '</div>';
+
+  const c = res.canvas || {};
+  if (c.connected) {
+    html += `<div class="msg ok">Verbonden met Canvas. Group set <b>${esc(plan.groupSetName)}</b> ` +
+      (c.groupSetExists ? 'bestaat al' : 'wordt aangemaakt') + '. ' +
+      (c.newGroups.length ? `${c.newGroups.length} nieuwe groep(en): ${esc(c.newGroups.join(', '))}` : '') +
+      (c.existingGroups.length ? `<br>${c.existingGroups.length} bestaande groep(en) worden bijgewerkt: ${esc(c.existingGroups.join(', '))}` : '') +
+      '</div>';
+  } else if (c.error) {
+    html += `<div class="msg warn">Canvas niet gecontroleerd: ${esc(c.error)}</div>`;
+  } else if (!c.connected) {
+    html += '';
+  }
+  $('warnBox').innerHTML = html;
+
+  if (!$('setName').value) $('setName').value = plan.groupSetName;
+  $('previewCard').classList.remove('hide');
+  $('pushCard').classList.remove('hide');
+}
+
+$('btnVerify').onclick = async () => {
+  $('verifyMsg').innerHTML = '<span style="color:var(--mut)">Bezig...</span>';
+  const res = await post('/api/verify', {});
+  if (res.error) {
+    $('verifyMsg').innerHTML = `<span style="color:var(--err)">${esc(res.error)}</span>`;
+  } else {
+    $('verifyMsg').innerHTML = `Ingelogd als <b>${esc(res.user)}</b> &rarr; cursus
+      <b>${esc(res.course)}</b> (${esc(res.course_code)})` +
+      res.categories.map(k => `<br>&bull; ${esc(k.name)}: ${k.groups} groepen, ${k.members} leden`).join('');
+  }
+};
+
+function options(dry) {
+  return {
+    dryRun: dry,
+    removeExtra: $('removeExtra').checked,
+    groupSetName: $('setName').value.trim()
+  };
+}
+
+async function push(dry) {
+  if (!csv) return;
+  const btn = dry ? $('btnDry') : $('btnPush');
+  btn.disabled = true;
+  $('pushBox').innerHTML = `<div class="msg">Bezig${dry ? ' met droge proef' : ''}...</div>`;
+  const res = await post('/api/push', { csv, options: options(dry) });
+  btn.disabled = false;
+
+  if (res.error) { $('pushBox').innerHTML = `<div class="msg err">${esc(res.error)}</div>`; return; }
+  const head = dry
+    ? 'Proefdraaien geslaagd, er is niets gewijzigd.'
+    : 'Klaar. ' + res.summary;
+  let html = `<div class="msg ok">${esc(head)}</div><pre>${esc(res.log.join('\n'))}</pre>`;
+  if (res.failed.length)
+    html += `<div class="msg warn"><b>Niet toegevoegd</b>\n${res.failed.map(esc).join('\n')}</div>`;
+  $('pushBox').innerHTML = html;
+}
+
+const SCOPES = [
+  'url:GET|/api/v1/users/self',
+  'url:GET|/api/v1/courses/:course_id/students',
+  'url:GET|/api/v1/courses/:course_id/group_categories',
+  'url:GET|/api/v1/courses/:course_id/groups',
+  'url:POST|/api/v1/courses/:course_id/group_categories',
+  'url:POST|/api/v1/group_categories/:group_category_id/groups',
+  'url:GET|/api/v1/group_categories/:group_category_id',
+  'url:GET|/api/v1/groups/:group_id',
+  'url:GET|/api/v1/groups/:group_id/users/:user_id',
+  'url:POST|/api/v1/groups/:group_id/memberships',
+  'url:PUT|/api/v1/groups/:group_id/users/:user_id',
+  'url:DELETE|/api/v1/groups/:group_id/users/:user_id',
+  'url:DELETE|/api/v1/group_categories/:group_category_id'
+].join('\n');
+
+$('scopes').value = SCOPES;
+
+$('btnCopy').onclick = async () => {
+  try {
+    await navigator.clipboard.writeText(SCOPES);
+    $('copyMsg').innerHTML = '<span style="color:var(--ok)">Gekopieerd.</span>';
+  } catch (e) {
+    $('scopes').select();
+    $('copyMsg').innerHTML = '<span style="color:var(--warn)">Selecteer en kopieer met Cmd+C.</span>';
+  }
+};
+
+$('btnTemplate').onclick = () => {
+  const rows = [
+    'team_number,team_name,group_category,student_name,email,canvas_user_id,sis_user_id,section,match_status',
+    '1,Team 1,Projectgroepen,X,demi.boye@student.arteveldehs.be,100966,S154413,DVG2-B,OK',
+    '1,Team 1,Projectgroepen,X,quin.vergucht@student.arteveldehs.be,101060,S154551,DVG2-B,OK',
+    '2,Team 2,Projectgroepen,X,ares.jacobs@student.arteveldehs.be,96342,S150690,DVG2-B,OK'
+  ].join('\n');
+  const url = URL.createObjectURL(new Blob([rows], {type: 'text/csv'}));
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'canvas-groepen-voorbeeld.csv';
+  a.click();
+  URL.revokeObjectURL(url);
+};
+
+$('btnWrite').onclick = async () => {
+  $('verifyMsg').innerHTML = '<span style="color:var(--mut)">Bezig...</span>';
+  const res = await post('/api/checkwrite', {});
+  if (res.error) {
+    $('verifyMsg').innerHTML = `<span style="color:var(--err)">${esc(res.error)}</span>`;
+  } else {
+    $('verifyMsg').innerHTML = '<span style="color:var(--ok)">Schrijftoegang is in orde.</span>';
+  }
+};
+
+$('setName').onchange = () => { if (csv) preview(); };
+$('btnDry').onclick = () => push(true);
+$('btnPush').onclick = () => {
+  if (confirm('Weet je zeker dat je de groepen in Canvas wilt aanmaken/bijwerken?')) push(false);
+};
+
+fetch('/api/config').then(r => r.json()).then(d => {
+  $('baseUrl').value = d.baseUrl || '';
+  $('courseId').value = d.courseId || '';
+  $('token').value = d.token || '';
+  const saved = sessionStorage.getItem(CACHE);
+  if (saved) {
+    const s = JSON.parse(saved);
+    $('baseUrl').value = s.baseUrl || $('baseUrl').value;
+    $('courseId').value = s.courseId || $('courseId').value;
+    $('token').value = s.token || $('token').value;
+  }
+});
+</script>
+</body>
+</html>
