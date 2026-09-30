@@ -8,6 +8,13 @@ aanwezigheidslijst.
 Dit is een .NET-project en dus de uitzondering op de conventies van deze repo:
 het heeft een build-stap nodig. Zie de [conventies](../README.md#conventies).
 
+Dit was eerst één app met drie pagina's. De andere twee staan nu los:
+
+- [`canvas-afspraaksloten/`](../canvas-afspraaksloten/) — wie er in jouw
+  afspraaksloten zaten, met hun cijfer.
+- [`canvas-bamaflex-export/`](../canvas-bamaflex-export/) — eindcijfers
+  exporteren naar Excel voor BamaFlex.
+
 ## Vereisten
 
 - **.NET 10 SDK** of later. Controleer met `dotnet --version`.
@@ -50,14 +57,6 @@ De app luistert standaard op `localhost` en is niet bereikbaar vanaf andere
 machines. Wil je dat toch, gebruik dan `dotnet run --urls http://0.0.0.0:5000`
 en weet wat je doet: het token staat dan in het geheugen van een bereikbare
 dienst.
-
-## De drie pagina's
-
-| Pagina | Wat het doet |
-| --- | --- |
-| **Absences + zeros** | Vrijstellingen en nulopzetten op basis van een afwezighedenexport |
-| **My calendar slots** | Toont de afspraaksloten die je zelf beheert, met wie geboekt heeft |
-| **Grade export** | Eindcijfers van een cursus exporteren naar Excel voor BamaFlex |
 
 ## Afwezigheden en nulopzetten
 
@@ -139,8 +138,6 @@ was afwezig.
 | Student terugzoeken | `GET /api/v1/courses/:id/users?search_term=` |
 | Vrijstelling zetten | `PUT /api/v1/courses/:id/assignments/:aid/submissions/:uid` met `submission[excuse]=true` |
 | Nul zetten | idem, met `submission[posted_grade]=0` en `submission[excuse]=false` |
-| Eindcijfers | `GET /api/v1/courses/:id/enrollments?type[]=StudentEnrollment` |
-| Afspraaksloten | `GET /api/v1/appointment_groups?scope=manageable` |
 
 Voor de lijst-endpoints volgt de app de `Link`-header met `rel="next"` in plaats
 van `?page=1,2,3`, omdat Canvas daar bookmark-paginering voor gebruikt.
@@ -177,8 +174,6 @@ url:GET|/api/v1/courses
 url:GET|/api/v1/courses/:course_id/assignments
 url:GET|/api/v1/courses/:course_id/sections
 url:GET|/api/v1/courses/:course_id/users
-url:GET|/api/v1/courses/:course_id/enrollments
-url:GET|/api/v1/appointment_groups
 url:PUT|/api/v1/courses/:course_id/assignments/:assignment_id/submissions/:user_id
 ```
 

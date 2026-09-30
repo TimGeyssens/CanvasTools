@@ -141,7 +141,6 @@ public class CanvasService
 
         return filtered;
     }
-
     public async Task<List<CanvasAssignment>> GetAssignmentsForCourse(long courseId)
     {
         var allAssignments = new List<CanvasAssignment>();
@@ -172,7 +171,6 @@ public class CanvasService
         
         return allAssignments;
     }
-
     public async Task<List<CanvasStudent>> GetStudentsForCourse(long courseId)
     {
         var allStudents = new List<CanvasStudent>();
@@ -302,7 +300,6 @@ public class CanvasService
 
         return allStudents;
     }
-
     public async Task<string?> GetStudentCanvasId(long courseId, string studentSisId)
     {
         // Safety: never search with empty term (could match arbitrary users)
@@ -327,7 +324,6 @@ public class CanvasService
 
         return null;
     }
-
     public async Task<bool> SetAssignmentExemption(long courseId, long assignmentId, string studentCanvasId, bool simulate = false)
     {
         // In simulation mode, just return success without making the actual API call
@@ -353,7 +349,6 @@ public class CanvasService
         
         return response.IsSuccessStatusCode;
     }
-
     public async Task<bool> SetAssignmentGradeToZero(long courseId, long assignmentId, string studentCanvasId, bool simulate = false)
     {
         // In simulation mode, just return success without making the actual API call
@@ -382,129 +377,6 @@ public class CanvasService
 
         return response.IsSuccessStatusCode;
     }
-
-    public async Task<List<BamaFlexGrade>> GetFinalGrades(long courseId)
-    {
-        // 1) Fetch enrollments (authoritative for current_score/final_score)
-        var enrollmentGradesByUserId = new Dictionary<long, CanvasEnrollmentGrades>();
-        var perPage = 100;
-
-        string? nextEnrollmentsUrl = $"{ApiRoot}/courses/{courseId}/enrollments?type[]=StudentEnrollment&state[]=active&include[]=user&per_page={perPage}";
-        var seenEnrollments = new HashSet<string>(StringComparer.Ordinal);
-
-        while (!string.IsNullOrWhiteSpace(nextEnrollmentsUrl))
-        {
-            if (!seenEnrollments.Add(nextEnrollmentsUrl))
-                break;
-
-            var response = await _httpClient.GetAsync(nextEnrollmentsUrl);
-            if (!response.IsSuccessStatusCode)
-            {
-                var errorContent = await response.Content.ReadAsStringAsync();
-                throw new HttpRequestException($"Failed to fetch enrollments/grades: {response.StatusCode}. Response: {errorContent}");
-            }
-
-            var content = await response.Content.ReadAsStringAsync();
-            var enrollments = JsonConvert.DeserializeObject<List<CanvasEnrollment>>(content) ?? new List<CanvasEnrollment>();
-
-            foreach (var e in enrollments)
-            {
-                if (e.UserId == 0 || e.Grades == null)
-                    continue;
-
-                enrollmentGradesByUserId[e.UserId] = e.Grades;
-            }
-
-            nextEnrollmentsUrl = GetNextLink(response);
-        }
-
-        // 2) Fetch course users (for student id + email)
-        var users = new List<Dictionary<string, object>>();
-        string? nextUsersUrl = $"{ApiRoot}/courses/{courseId}/users?enrollment_type[]=student&enrollment_state[]=active&include[]=email&per_page={perPage}";
-        var seenUsers = new HashSet<string>(StringComparer.Ordinal);
-
-        while (!string.IsNullOrWhiteSpace(nextUsersUrl))
-        {
-            if (!seenUsers.Add(nextUsersUrl))
-                break;
-
-            var response = await _httpClient.GetAsync(nextUsersUrl);
-            if (!response.IsSuccessStatusCode)
-            {
-                var errorContent = await response.Content.ReadAsStringAsync();
-                throw new HttpRequestException($"Failed to fetch students: {response.StatusCode}. Response: {errorContent}");
-            }
-
-            var content = await response.Content.ReadAsStringAsync();
-            var page = JsonConvert.DeserializeObject<List<Dictionary<string, object>>>(content) ?? new List<Dictionary<string, object>>();
-            users.AddRange(page);
-
-            nextUsersUrl = GetNextLink(response);
-        }
-
-        // 3) Combine into BamaFlex export rows
-        var grades = new List<BamaFlexGrade>();
-
-        foreach (var user in users)
-        {
-            var name = user.ContainsKey("name") ? user["name"]?.ToString() : string.Empty;
-            var email = user.ContainsKey("email") ? user["email"]?.ToString() : string.Empty;
-            var loginId = user.ContainsKey("login_id") ? user["login_id"]?.ToString() : string.Empty;
-            var sisUserId = user.ContainsKey("sis_user_id") ? user["sis_user_id"]?.ToString() : string.Empty;
-
-            long.TryParse(user.ContainsKey("id") ? user["id"]?.ToString() : null, out var canvasUserId);
-
-            // Prefer email/login prefix since our other imports use that.
-            string? studentId = null;
-            if (!string.IsNullOrWhiteSpace(email) && email.Contains('@'))
-            {
-                studentId = email.Split('@')[0];
-            }
-            else if (!string.IsNullOrWhiteSpace(loginId) && loginId.Contains('@'))
-            {
-                studentId = loginId.Split('@')[0];
-            }
-            else if (!string.IsNullOrWhiteSpace(sisUserId))
-            {
-                studentId = sisUserId;
-            }
-            else if (!string.IsNullOrWhiteSpace(loginId))
-            {
-                studentId = loginId;
-            }
-            else
-            {
-                studentId = canvasUserId != 0 ? canvasUserId.ToString() : string.Empty;
-            }
-
-            enrollmentGradesByUserId.TryGetValue(canvasUserId, out var enrollmentGrades);
-
-            decimal? score = enrollmentGrades?.FinalScore ?? enrollmentGrades?.CurrentScore;
-            if (score.HasValue)
-                score = CanvasStudentScore.ToTwentyPointScale(score.Value);
-
-            var letter = enrollmentGrades?.FinalGrade ?? enrollmentGrades?.CurrentGrade;
-
-            grades.Add(new BamaFlexGrade
-            {
-                StudentId = studentId ?? string.Empty,
-                StudentName = name ?? string.Empty,
-                Email = (!string.IsNullOrWhiteSpace(email) ? email : (loginId ?? string.Empty)),
-                FinalGrade = score,
-                LetterGrade = letter
-            });
-        }
-
-        return grades;
-    }
-
-    public async Task<List<ExemptionResult>> ProcessExemptions(long courseId, List<Absence> absences, bool simulate = false)
-    {
-        // Backwards-compatible overload: fetch assignments from Canvas (Inleverdatum will be empty)
-        var assignments = await GetAssignmentsForCourse(courseId);
-        return await ProcessExemptions(courseId, absences, assignments, simulate);
-    }
-
     private static IEnumerable<string> SplitSectionNames(string? sectionName)
     {
         if (string.IsNullOrWhiteSpace(sectionName))
@@ -515,7 +387,6 @@ public class CanvasService
             .Select(s => s.Trim())
             .Where(s => !string.IsNullOrWhiteSpace(s));
     }
-
     private static DateTime? GetMatchingInleverdatum(CanvasAssignment assignment, DateTime absenceDate, string? sectionName)
     {
         // 1) Per-section override (if enabled)
@@ -540,7 +411,6 @@ public class CanvasService
 
         return null;
     }
-
     public async Task<List<ExemptionResult>> ProcessExemptions(long courseId, List<Absence> absences, List<CanvasAssignment> assignments, bool simulate = false)
     {
         if (assignments == null)
@@ -608,7 +478,6 @@ public class CanvasService
 
         return results;
     }
-
     public async Task<List<ExemptionResult>> ProcessZeros(long courseId, List<UnjustifiedAbsence> unjustifiedAbsences, List<CanvasAssignment> assignments, bool simulate = false)
     {
         if (unjustifiedAbsences == null)
@@ -696,110 +565,5 @@ public class CanvasService
         }
 
         return results;
-    }
-
-    public async Task<List<CanvasAppointmentGroup>> GetMyAppointmentGroupsForCourse(long courseId, bool includePastAppointments = true)
-    {
-        // Step 1: list manageable groups for the course (lightweight response)
-        var groupSummaries = new List<CanvasAppointmentGroup>();
-        var perPage = 50;
-
-        // Many appointment groups are in the past; Canvas defaults to excluding them.
-        var includePast = includePastAppointments ? "&include_past_appointments=true" : string.Empty;
-
-        string? nextUrl = $"{ApiRoot}/appointment_groups?scope=manageable&context_codes[]=course_{courseId}&per_page={perPage}{includePast}";
-        var seen = new HashSet<string>(StringComparer.Ordinal);
-
-        while (!string.IsNullOrWhiteSpace(nextUrl))
-        {
-            if (!seen.Add(nextUrl))
-                break;
-
-            var response = await _httpClient.GetAsync(nextUrl);
-
-            if (!response.IsSuccessStatusCode)
-            {
-                var errorContent = await response.Content.ReadAsStringAsync();
-                throw new HttpRequestException($"Failed to fetch appointment groups: {response.StatusCode}. Response: {errorContent}");
-            }
-
-            var content = await response.Content.ReadAsStringAsync();
-            var groups = JsonConvert.DeserializeObject<List<CanvasAppointmentGroup>>(content) ?? new List<CanvasAppointmentGroup>();
-            groupSummaries.AddRange(groups);
-
-            nextUrl = GetNextLink(response);
-        }
-
-        // Step 2: fetch group details so we actually get the appointment slots (appointments array)
-        var detailed = new List<CanvasAppointmentGroup>();
-        foreach (var g in groupSummaries)
-        {
-            // /appointment_groups/:id returns appointments; include child_events for reservations
-            var detailUrl = $"{ApiRoot}/appointment_groups/{g.Id}?include[]=appointments&include[]=child_events";
-            if (includePastAppointments)
-                detailUrl += "&include_past_appointments=true";
-
-            var response = await _httpClient.GetAsync(detailUrl);
-
-            if (!response.IsSuccessStatusCode)
-            {
-                var errorContent = await response.Content.ReadAsStringAsync();
-                throw new HttpRequestException($"Failed to fetch appointment group details: {response.StatusCode}. Response: {errorContent}");
-            }
-
-            var content = await response.Content.ReadAsStringAsync();
-            var group = JsonConvert.DeserializeObject<CanvasAppointmentGroup>(content);
-            if (group != null)
-                detailed.Add(group);
-        }
-
-        return detailed;
-    }
-
-    public async Task<Dictionary<long, CanvasStudentScore>> GetStudentScoresForCourse(long courseId)
-    {
-        var map = new Dictionary<long, CanvasStudentScore>();
-        var perPage = 100;
-
-        // include[]=user gives us the name, so we can show booked student name even when calendar events don't include it.
-        string? nextUrl = $"{ApiRoot}/courses/{courseId}/enrollments?type[]=StudentEnrollment&state[]=active&include[]=user&per_page={perPage}";
-        var seen = new HashSet<string>(StringComparer.Ordinal);
-
-        while (!string.IsNullOrWhiteSpace(nextUrl))
-        {
-            if (!seen.Add(nextUrl))
-                break;
-
-            var response = await _httpClient.GetAsync(nextUrl);
-
-            if (!response.IsSuccessStatusCode)
-            {
-                var errorContent = await response.Content.ReadAsStringAsync();
-                throw new HttpRequestException($"Failed to fetch enrollments/grades: {response.StatusCode}. Response: {errorContent}");
-            }
-
-            var content = await response.Content.ReadAsStringAsync();
-            var enrollments = JsonConvert.DeserializeObject<List<CanvasEnrollment>>(content) ?? new List<CanvasEnrollment>();
-
-            foreach (var e in enrollments)
-            {
-                if (e.UserId == 0)
-                    continue;
-
-                var name = e.User?.Name ?? string.Empty;
-
-                map[e.UserId] = new CanvasStudentScore
-                {
-                    UserId = e.UserId,
-                    Name = name,
-                    CurrentScore = e.Grades?.CurrentScore,
-                    FinalScore = e.Grades?.FinalScore
-                };
-            }
-
-            nextUrl = GetNextLink(response);
-        }
-
-        return map;
     }
 }
