@@ -1,0 +1,302 @@
+@page "/calendar-overview"
+@using CanvasAfwezighedenVrijstellingen.Models
+@using CanvasAfwezighedenVrijstellingen.Services
+@inject CanvasService CanvasService
+@inject IConfiguration Configuration
+
+<PageTitle>My calendar slots</PageTitle>
+
+<div class="container mt-5">
+    <NavTabs />
+
+    <CanvasConnect OnConnected="LoadCourses" />
+
+    <h1>My calendar slots</h1>
+    <p class="text-muted">Shows appointment slots you can manage for the selected course (typically the ones you created). Other teachers' slots should not appear.</p>
+
+    <div class="card mt-4">
+        <div class="card-body">
+            <h5 class="card-title">Step 1: Select course</h5>
+            <div class="mb-3">
+                <label for="courseSelect" class="form-label">Canvas course</label>
+                <div class="input-group">
+                    <select id="courseSelect" class="form-select" @onchange="OnCourseSelected" disabled="@isLoadingCourses">
+                        <option value="0" selected="@(courseId == 0)">-- Select a course --</option>
+                        @if (courses != null)
+                        {
+                            @foreach (var c in courses)
+                            {
+                                <option value="@c.Id" selected="@(c.Id == courseId)">@(string.IsNullOrWhiteSpace(c.Name) ? $"Course {c.Id}" : c.Name)</option>
+                            }
+                        }
+                    </select>
+                    <button class="btn btn-outline-secondary" type="button" @onclick="LoadCourses" disabled="@isLoadingCourses">
+                        @if (isLoadingCourses)
+                        {
+                            <span class="spinner-border spinner-border-sm me-1"></span>
+                        }
+                        Refresh courses
+                    </button>
+                </div>
+
+                <div class="form-check mt-2">
+                    <input class="form-check-input" type="checkbox" id="includePast" @bind="includePastAppointments" @bind:after="OnIncludePastChanged" />
+                    <label class="form-check-label" for="includePast">
+                        Include past appointment groups
+                    </label>
+                </div>
+
+                <div class="form-text">Selecting a course loads appointment groups you can manage (typically ones you created). You can optionally include past slots.</div>
+            </div>
+
+            @if (isLoadingSlots)
+            {
+                <div class="text-muted">
+                    <span class="spinner-border spinner-border-sm me-1"></span>
+                    Loading calendar slots...
+                </div>
+            }
+        </div>
+    </div>
+
+    @if (slotsByDate != null && slotsByDate.Count > 0)
+    {
+        <div class="card mt-4">
+            <div class="card-body">
+                <h5 class="card-title">Slots by day</h5>
+
+                @foreach (var day in slotsByDate.OrderBy(kv => kv.Key))
+                {
+                    <div class="mb-4">
+                        <h6 class="fw-bold">@day.Key.ToString("yyyy-MM-dd") (@day.Value.Count slot(s))</h6>
+                        <div class="table-responsive">
+                            <table class="table table-sm table-striped">
+                                <thead>
+                                    <tr>
+                                        <th>Time</th>
+                                        <th>Duration</th>
+                                        <th>Group</th>
+                                        <th>Booked by</th>
+                                        <th>Final score (/20)</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    @foreach (var slot in day.Value.OrderBy(s => s.Start))
+                                    {
+                                        <tr class="@(slot.IsBooked ? "table-success" : "")">
+                                            <td>@slot.Start.ToLocalTime().ToString("HH:mm") - @slot.End.ToLocalTime().ToString("HH:mm")</td>
+                                            <td>@((slot.End - slot.Start).TotalMinutes.ToString("0")) min</td>
+                                            <td>@slot.GroupTitle</td>
+                                            <td>@slot.BookedBy</td>
+                                            <td>@slot.Score</td>
+                                        </tr>
+                                    }
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                }
+            </div>
+        </div>
+    }
+    else if (appointmentGroups != null)
+    {
+        <div class="alert alert-warning mt-4">
+            No slots found for this course (or Canvas returned no manageable appointment groups).
+        </div>
+    }
+
+    @if (!string.IsNullOrEmpty(errorMessage))
+    {
+        <div class="alert alert-danger mt-3">
+            @errorMessage
+        </div>
+    }
+</div>
+
+@code {
+    private long courseId;
+    private List<CanvasCourse>? courses;
+    private bool isLoadingCourses;
+
+    private bool includePastAppointments = true;
+
+    private bool isLoadingSlots;
+    private List<CanvasAppointmentGroup>? appointmentGroups;
+    private Dictionary<long, CanvasStudentScore>? scoresByUserId;
+
+    private Dictionary<DateOnly, List<SlotRow>>? slotsByDate;
+
+    private string? errorMessage;
+
+    private record SlotRow(DateTimeOffset Start, DateTimeOffset End, string GroupTitle, string BookedBy, string Score, bool IsBooked);
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!CanvasService.IsConfigured)
+            return;
+
+        var configuredCourseId = Configuration["Canvas:CourseId"];
+        if (!string.IsNullOrEmpty(configuredCourseId) && long.TryParse(configuredCourseId, out var parsedId))
+        {
+            courseId = parsedId;
+        }
+
+        await LoadCourses();
+
+        if (courseId != 0 && courses != null && courses.Any(c => c.Id == courseId))
+        {
+            await LoadSlotsForCourse();
+        }
+        else
+        {
+            courseId = 0;
+        }
+    }
+
+    private async Task LoadCourses()
+    {
+        isLoadingCourses = true;
+        errorMessage = null;
+
+        try
+        {
+            courses = await CanvasService.GetCoursesForCurrentUser();
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"Error loading courses: {ex.Message}";
+            courses = new List<CanvasCourse>();
+        }
+        finally
+        {
+            isLoadingCourses = false;
+        }
+    }
+
+    private async Task OnCourseSelected(ChangeEventArgs e)
+    {
+        if (!long.TryParse(e.Value?.ToString(), out var selectedCourseId))
+            selectedCourseId = 0;
+
+        courseId = selectedCourseId;
+
+        appointmentGroups = null;
+        scoresByUserId = null;
+        slotsByDate = null;
+
+        if (courseId == 0)
+            return;
+
+        await LoadSlotsForCourse();
+    }
+
+    private async Task OnIncludePastChanged()
+    {
+        if (courseId == 0)
+            return;
+
+        await LoadSlotsForCourse();
+    }
+
+    private async Task LoadSlotsForCourse()
+    {
+        if (courseId == 0)
+            return;
+
+        isLoadingSlots = true;
+        errorMessage = null;
+
+        try
+        {
+            // Load appointment groups and grades map concurrently.
+            var groupsTask = CanvasService.GetMyAppointmentGroupsForCourse(courseId, includePastAppointments);
+            var scoresTask = CanvasService.GetStudentScoresForCourse(courseId);
+
+            await Task.WhenAll(groupsTask, scoresTask);
+
+            appointmentGroups = groupsTask.Result;
+            scoresByUserId = scoresTask.Result;
+
+            slotsByDate = BuildSlotsByDate(
+                appointmentGroups ?? new List<CanvasAppointmentGroup>(),
+                scoresByUserId ?? new Dictionary<long, CanvasStudentScore>());
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"Error loading slots: {ex.Message}";
+            appointmentGroups = new List<CanvasAppointmentGroup>();
+            scoresByUserId = new Dictionary<long, CanvasStudentScore>();
+            slotsByDate = new Dictionary<DateOnly, List<SlotRow>>();
+        }
+        finally
+        {
+            isLoadingSlots = false;
+        }
+    }
+
+    private static Dictionary<DateOnly, List<SlotRow>> BuildSlotsByDate(List<CanvasAppointmentGroup> groups, Dictionary<long, CanvasStudentScore> scoresByUserId)
+    {
+        var rows = new List<SlotRow>();
+
+        foreach (var g in groups)
+        {
+            var groupTitle = string.IsNullOrWhiteSpace(g.Title) ? $"Group {g.Id}" : g.Title;
+            if (g.Appointments == null)
+                continue;
+
+            foreach (var slot in g.Appointments)
+            {
+                if (!slot.StartAt.HasValue || !slot.EndAt.HasValue)
+                    continue;
+
+                // Booked reservations are represented as child events.
+                // The child event's context_code is typically "user_{id}", which we can map to a course score.
+                var reservationUserIds = new List<long>();
+                foreach (var ce in (slot.ChildEvents ?? new List<CanvasCalendarEvent>()))
+                {
+                    var cc = ce.ContextCode ?? string.Empty;
+                    if (cc.StartsWith("user_", StringComparison.OrdinalIgnoreCase) && long.TryParse(cc.Substring("user_".Length), out var uid))
+                    {
+                        reservationUserIds.Add(uid);
+                    }
+                }
+
+                if (reservationUserIds.Count == 0)
+                {
+                    rows.Add(new SlotRow(slot.StartAt.Value, slot.EndAt.Value, groupTitle, "Available", string.Empty, false));
+                    continue;
+                }
+
+                var bookedByNames = new List<string>();
+                var scoreParts = new List<string>();
+
+                foreach (var uid in reservationUserIds.Distinct())
+                {
+                    if (scoresByUserId.TryGetValue(uid, out var score))
+                    {
+                        bookedByNames.Add(string.IsNullOrWhiteSpace(score.Name) ? $"User {uid}" : score.Name);
+                        scoreParts.Add(score.DisplayScore());
+                    }
+                    else
+                    {
+                        bookedByNames.Add($"User {uid}");
+                        scoreParts.Add("—");
+                    }
+                }
+
+                rows.Add(new SlotRow(
+                    slot.StartAt.Value,
+                    slot.EndAt.Value,
+                    groupTitle,
+                    string.Join(", ", bookedByNames),
+                    string.Join("; ", scoreParts),
+                    true));
+            }
+        }
+
+        return rows
+            .GroupBy(r => DateOnly.FromDateTime(r.Start.ToLocalTime().DateTime.Date))
+            .ToDictionary(g => g.Key, g => g.OrderBy(x => x.Start).ToList());
+    }
+}

@@ -1,0 +1,212 @@
+@page "/grade-export"
+@using CanvasAfwezighedenVrijstellingen.Models
+@using CanvasAfwezighedenVrijstellingen.Services
+@using Microsoft.JSInterop
+@inject CanvasService CanvasService
+@inject ExcelService ExcelService
+@inject IConfiguration Configuration
+@inject IJSRuntime JSRuntime
+
+<PageTitle>Canvas Grade Export to BamaFlex</PageTitle>
+
+<div class="container mt-5">
+    <NavTabs />
+
+    <CanvasConnect OnConnected="LoadCourses" />
+
+    <h1>Export Canvas Grades to BamaFlex Format</h1>
+    <p>Export final grades from a Canvas course to an Excel file for BamaFlex import.</p>
+
+    <div class="card mt-4">
+        <div class="card-body">
+            <h5 class="card-title">Step 1: Select course</h5>
+            <div class="mb-3">
+                <label for="courseSelect" class="form-label">Canvas course</label>
+                <div class="input-group">
+                    <select id="courseSelect" class="form-select" @onchange="OnCourseSelected" disabled="@isLoadingCourses">
+                        <option value="0" selected="@(courseId == 0)">-- Select a course --</option>
+                        @if (courses != null)
+                        {
+                            @foreach (var c in courses)
+                            {
+                                <option value="@c.Id" selected="@(c.Id == courseId)">@(string.IsNullOrWhiteSpace(c.Name) ? $"Course {c.Id}" : c.Name)</option>
+                            }
+                        }
+                    </select>
+                    <button class="btn btn-outline-secondary" type="button" @onclick="LoadCourses" disabled="@isLoadingCourses">
+                        @if (isLoadingCourses)
+                        {
+                            <span class="spinner-border spinner-border-sm me-1"></span>
+                        }
+                        Refresh courses
+                    </button>
+                </div>
+                @if (isLoading)
+                {
+                    <div class="text-muted mt-2">
+                        <span class="spinner-border spinner-border-sm me-1"></span>
+                        Loading grades...
+                    </div>
+                }
+            </div>
+
+            @if (grades != null && grades.Count > 0)
+            {
+                <div class="alert alert-success mt-3">
+                    Loaded grades for @grades.Count student(s)
+                </div>
+                
+                <div class="table-responsive" style="max-height: 400px; overflow-y: auto;">
+                    <table class="table table-sm table-striped">
+                        <thead class="sticky-top bg-white">
+                            <tr>
+                                <th>Student ID</th>
+                                <th>Student Name</th>
+                                <th>Email</th>
+                                <th>Final Score (/20)</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var grade in grades.OrderBy(g => g.StudentId))
+                            {
+                                <tr>
+                                    <td>@grade.StudentId</td>
+                                    <td>@grade.StudentName</td>
+                                    <td>@grade.Email</td>
+                                    <td>@(grade.FinalGrade?.ToString("F2") ?? "N/A")</td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+
+                <button class="btn btn-success mt-3" @onclick="ExportToBamaFlex">
+                    <i class="bi bi-download"></i> Export to BamaFlex Excel Format
+                </button>
+            }
+            else if (grades != null && grades.Count == 0)
+            {
+                <div class="alert alert-warning mt-3">
+                    No students found in this course
+                </div>
+            }
+        </div>
+    </div>
+
+    @if (!string.IsNullOrEmpty(errorMessage))
+    {
+        <div class="alert alert-danger mt-3">
+            @errorMessage
+        </div>
+    }
+</div>
+
+@code {
+    private long courseId;
+    private List<CanvasCourse>? courses;
+    private bool isLoadingCourses = false;
+    private List<BamaFlexGrade>? grades;
+    private bool isLoading = false;
+    private string? errorMessage;
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!CanvasService.IsConfigured)
+            return;
+
+        // Load default course ID from configuration
+        var configuredCourseId = Configuration["Canvas:CourseId"];
+        if (!string.IsNullOrEmpty(configuredCourseId) && long.TryParse(configuredCourseId, out var parsedId))
+        {
+            courseId = parsedId;
+        }
+
+        await LoadCourses();
+
+        // Auto-load grades if default course exists in the dropdown
+        if (courseId != 0 && courses != null && courses.Any(c => c.Id == courseId))
+        {
+            await LoadGrades();
+        }
+        else
+        {
+            courseId = 0;
+        }
+    }
+
+    private async Task LoadCourses()
+    {
+        isLoadingCourses = true;
+        errorMessage = null;
+        courses = null;
+
+        try
+        {
+            courses = await CanvasService.GetCoursesForCurrentUser();
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"Error loading courses: {ex.Message}";
+            courses = new List<CanvasCourse>();
+        }
+        finally
+        {
+            isLoadingCourses = false;
+        }
+    }
+
+    private async Task OnCourseSelected(ChangeEventArgs e)
+    {
+        if (!long.TryParse(e.Value?.ToString(), out var selectedCourseId))
+            selectedCourseId = 0;
+
+        courseId = selectedCourseId;
+        grades = null;
+
+        if (courseId == 0)
+            return;
+
+        await LoadGrades();
+    }
+
+    private async Task LoadGrades()
+    {
+        if (courseId == 0)
+            return;
+
+        isLoading = true;
+        errorMessage = null;
+        grades = null;
+
+        try
+        {
+            grades = await CanvasService.GetFinalGrades(courseId);
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"Error loading grades: {ex.Message}";
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private async Task ExportToBamaFlex()
+    {
+        if (grades == null || grades.Count == 0)
+            return;
+
+        try
+        {
+            var excelBytes = ExcelService.ExportGradesToBamaFlexFormat(grades);
+            var fileName = $"BamaFlex_Grades_Course_{courseId}_{DateTime.Now:yyyyMMdd}.xlsx";
+            
+            await JSRuntime.InvokeVoidAsync("downloadFile", fileName, Convert.ToBase64String(excelBytes));
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"Error exporting grades: {ex.Message}";
+        }
+    }
+}

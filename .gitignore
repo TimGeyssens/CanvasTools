@@ -8,6 +8,11 @@
 __pycache__/
 *.py[cod]
 
+# dotnet
+[Bb]in/
+[Oo]bj/
+appsettings.json
+
 # macOS
 .DS_Store
 

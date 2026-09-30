@@ -1,0 +1,1155 @@
+@page "/"
+@using CanvasAfwezighedenVrijstellingen.Models
+@using CanvasAfwezighedenVrijstellingen.Services
+@inject ExcelService ExcelService
+@inject CanvasService CanvasService
+@inject IConfiguration Configuration
+
+<PageTitle>Canvas Absence Exemption Tool</PageTitle>
+
+<div class="container mt-5">
+    <NavTabs />
+
+    <CanvasConnect OnConnected="LoadCourses" />
+
+    <h1>Canvas Absence Tool (Exemptions + Zeros)</h1>
+    <p>Upload a <strong>gewettigd</strong> absence export to apply Canvas exemptions, and optionally upload an attendance list (present students) to assign <strong>0</strong> to students who were absent <strong>without</strong> a justified absence.</p>
+
+    <div class="card mt-4">
+        <div class="card-body">
+            <h5 class="card-title">Step 1: Select course</h5>
+            <div class="mb-3">
+                <label for="courseSelect" class="form-label">Canvas course</label>
+                <div class="input-group">
+                    <select id="courseSelect" class="form-select" @onchange="OnCourseSelected" disabled="@isLoadingCourses">
+                        <option value="0" selected="@(courseId == 0)">-- Select a course --</option>
+                        @if (courses != null)
+                        {
+                            @foreach (var c in courses)
+                            {
+                                <option value="@c.Id" selected="@(c.Id == courseId)">@(string.IsNullOrWhiteSpace(c.Name) ? $"Course {c.Id}" : c.Name)</option>
+                            }
+                        }
+                    </select>
+                    <button class="btn btn-outline-secondary" type="button" @onclick="LoadCourses" disabled="@isLoadingCourses">
+                        @if (isLoadingCourses)
+                        {
+                            <span class="spinner-border spinner-border-sm me-1"></span>
+                        }
+                        Refresh courses
+                    </button>
+                </div>
+                <div class="form-text">Selecting a course automatically loads assignments and the student roster.</div>
+            </div>
+
+            @if (isLoadingAssignments)
+            {
+                <div class="text-muted">
+                    <span class="spinner-border spinner-border-sm me-1"></span>
+                    Loading assignments...
+                </div>
+            }
+            @if (isLoadingStudents)
+            {
+                <div class="text-muted">
+                    <span class="spinner-border spinner-border-sm me-1"></span>
+                    Loading students...
+                </div>
+            }
+
+            @if (assignments != null && assignments.Count > 0)
+            {
+                <div class="alert alert-success">
+                    Found @assignments.Count assignment(s) in course
+                </div>
+                <p class="text-muted">Set the <strong>Inleverdatum</strong> (the class/assignment date you want to match) for each assignment.</p>
+                <div class="table-responsive" style="max-height: 400px; overflow-y: auto;">
+                    <table class="table table-sm table-striped">
+                        <thead class="sticky-top bg-white">
+                            <tr>
+                                <th>Assignment Name</th>
+                                <th>Due Date (Canvas)</th>
+                                <th>Inleverdatum</th>
+                                <th>By class</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var assignment in assignments.OrderBy(a => a.DueAt))
+                            {
+                                <tr>
+                                    <td>@assignment.Name</td>
+                                    <td>@(assignment.DueAt?.ToString("yyyy-MM-dd HH:mm") ?? "No due date")</td>
+                                    <td>
+                                        <input type="date" 
+                                               class="form-control form-control-sm" 
+                                               @bind="assignment.Inleverdatum" 
+                                               @bind:format="yyyy-MM-dd"
+                                               disabled="@assignment.UseInleverdatumBySection" />
+
+                                        @if (assignment.UseInleverdatumBySection)
+                                        {
+                                            <div class="mt-2 small">
+                                                @if (courseSectionNames.Count == 0)
+                                                {
+                                                    <div class="text-muted">No classes/sections found yet (load roster first).</div>
+                                                }
+                                                else
+                                                {
+                                                    foreach (var sec in courseSectionNames)
+                                                    {
+                                                        var current = GetAssignmentSectionDate(assignment, sec);
+
+                                                        <div class="input-group input-group-sm mb-1">
+                                                            <span class="input-group-text" style="min-width: 180px;">@sec</span>
+                                                            <input type="date"
+                                                                   class="form-control"
+                                                                   value="@(current.HasValue ? current.Value.ToString("yyyy-MM-dd") : string.Empty)"
+                                                                   @onchange="(ChangeEventArgs e) => SetAssignmentSectionDate(assignment, sec, e)" />
+                                                        </div>
+                                                    }
+                                                }
+                                            </div>
+                                        }
+                                    </td>
+                                    <td class="text-center">
+                                        <input class="form-check-input" type="checkbox" title="Set Inleverdatum per class/section" @bind="assignment.UseInleverdatumBySection" />
+                                    </td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            }
+            else if (assignments != null && assignments.Count == 0)
+            {
+                <div class="alert alert-warning">
+                    No assignments found in this course
+                </div>
+            }
+
+            @if (students != null)
+            {
+                <div class="alert alert-secondary mt-2 d-flex justify-content-between align-items-center">
+                    <div>
+                        Loaded @students.Count active student(s) from Canvas roster (used to infer absences when the attendance file lists only present students)
+                    </div>
+                    <button class="btn btn-sm btn-outline-secondary" type="button" @onclick="ToggleStudentRoster" disabled="@(students.Count == 0)">
+                        @(showStudentRoster ? "Hide" : "Show") roster
+                    </button>
+                </div>
+
+                @if (showStudentRoster && students.Count > 0)
+                {
+                    <div class="table-responsive" style="max-height: 300px; overflow-y: auto;">
+                        <table class="table table-sm table-striped">
+                            <thead class="sticky-top bg-white">
+                                <tr>
+                                    <th>Student Name</th>
+                                    <th>Student ID</th>
+                                    <th>Email</th>
+                                    <th>Class / Section</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @foreach (var s in students.OrderBy(s => s.SectionName).ThenBy(s => s.StudentName))
+                                {
+                                    <tr>
+                                        <td>@s.StudentName</td>
+                                        <td>@s.StudentId</td>
+                                        <td>@s.Email</td>
+                                        <td>@(string.IsNullOrWhiteSpace(s.SectionName) ? "—" : s.SectionName)</td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                }
+            }
+
+            <h5 class="card-title mt-4">Step 2: Upload gewettigde afwezigheden (justified absences)</h5>
+            <p class="text-muted">Upload the Artevelde absence export (Excel with columns: naam, voornaam, e-mail, Begindatum, Einddatum). Only rows with status <strong>gewettigd</strong> are used.</p>
+            <InputFile OnChange="@HandleFileSelected" class="form-control" accept=".xlsx,.xls" />
+
+            @if (absences != null && absences.Count > 0)
+            {
+                <div class="alert alert-info mt-3">
+                    Loaded @absences.Count justified absence record(s) (status: gewettigd) from Excel
+                </div>
+                
+                @if (assignments != null && assignments.Count > 0)
+                {
+                    <button class="btn btn-info mt-2" @onclick="GenerateAbsenceOverview">
+                        Show overview (justified absences per assignment)
+                    </button>
+                    
+                    @if (showAbsenceOverview)
+                    {
+                        <button class="btn btn-success mt-2 ms-2" @onclick="() => ApplyExemptionsFromOverview(false)" disabled="@isProcessing">
+                            @if (isProcessing)
+                            {
+                                <span class="spinner-border spinner-border-sm me-1"></span>
+                            }
+                            Apply exemptions (vrijstellingen) to Canvas
+                        </button>
+                        <button class="btn btn-warning mt-2 ms-2" @onclick="() => ApplyExemptionsFromOverview(true)" disabled="@isProcessing">
+                            @if (isProcessing)
+                            {
+                                <span class="spinner-border spinner-border-sm me-1"></span>
+                            }
+                            Simulate exemptions (vrijstellingen)
+                        </button>
+                    }
+                }
+            }
+
+            <h5 class="card-title mt-4">Step 3: Upload attendance list (optional)</h5>
+            <p class="text-muted">Upload attendance file(s) that list <strong>present</strong> students for a class date. Students who are <strong>not</strong> in the list are treated as absent. A student receives <strong>0</strong> only if they are absent <strong>and</strong> not <strong>gewettigd</strong>.</p>
+            <InputFile OnChange="@HandleAttendanceFileSelected" class="form-control" accept=".xlsx,.xls" multiple />
+
+            @if (attendanceRecords != null && attendanceRecords.Count > 0)
+            {
+                <div class="alert alert-info mt-3">
+                    Loaded attendance records for @attendanceRecords.Select(a => a.Date).Distinct().Count() date(s) (@attendanceFilesUploaded file(s) uploaded)
+                </div>
+
+                var attendanceDates = attendanceRecords.Select(a => a.Date.Date).Distinct().OrderBy(d => d).ToList();
+                var presentOnlyExport = attendanceRecords.All(a => a.Present);
+
+                <div class="text-muted small">
+                    @foreach (var d in attendanceDates)
+                    {
+                        // Present list (from attendance file)
+                        var presentEmailKeys = attendanceRecords
+                            .Where(a => a.Date.Date == d && a.Present)
+                            .Select(a => NormalizeStudentKey(a.StudentId))
+                            .Where(id => !string.IsNullOrWhiteSpace(id))
+                            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+                        // Build name-key sets from attendance (we add both full-name and first+last forms)
+                        var presentNameKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                        var presentNamePrimary = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+                        foreach (var a in attendanceRecords.Where(a => a.Date.Date == d && a.Present))
+                        {
+                            var full = NormalizeNameKey(a.StudentName);
+                            var firstLast = NormalizeNameKeyFirstLast(a.StudentName);
+
+                            if (!string.IsNullOrWhiteSpace(full))
+                            {
+                                presentNameKeys.Add(full);
+                                presentNamePrimary.Add(full);
+                            }
+
+                            if (!string.IsNullOrWhiteSpace(firstLast))
+                            {
+                                presentNameKeys.Add(firstLast);
+                                presentNamePrimary.Add(firstLast);
+                            }
+                        }
+
+                        // Attendance "ID" is not a Canvas identifier; show present count based on names.
+                        var presentCount = presentNamePrimary.Count;
+
+                        var rosterCount = students?.Count ?? 0;
+
+                        var matchedPresentCount = 0;
+                        var absentCount = (int?)null;
+
+                        if (students != null && presentOnlyExport)
+                        {
+                            matchedPresentCount = students.Count(s =>
+                            {
+                                // Email-based match (if Canvas provides email)
+                                var rosterEmailPrefix = (!string.IsNullOrWhiteSpace(s.Email) && s.Email.Contains('@'))
+                                    ? NormalizeStudentKey(s.Email.Split('@')[0])
+                                    : string.Empty;
+
+                                // Name-based match (handles cases like "Andres Fonteyne - 202445753")
+                                var rosterNameKey = NormalizeNameKey(s.StudentName);
+                                var rosterNameFirstLast = NormalizeNameKeyFirstLast(s.StudentName);
+
+                                // StudentId-based match (e.g., andres.fonteyne => "andres fonteyne")
+                                var rosterIdAsName = NormalizeIdAsNameKey(s.StudentId);
+                                var rosterIdAsNameFirstLast = NormalizeIdAsNameKeyFirstLast(s.StudentId);
+
+                                return (!string.IsNullOrWhiteSpace(rosterEmailPrefix) && presentEmailKeys.Contains(rosterEmailPrefix))
+                                       || (!string.IsNullOrWhiteSpace(rosterNameKey) && presentNameKeys.Contains(rosterNameKey))
+                                       || (!string.IsNullOrWhiteSpace(rosterNameFirstLast) && presentNameKeys.Contains(rosterNameFirstLast))
+                                       || (!string.IsNullOrWhiteSpace(rosterIdAsName) && presentNameKeys.Contains(rosterIdAsName))
+                                       || (!string.IsNullOrWhiteSpace(rosterIdAsNameFirstLast) && presentNameKeys.Contains(rosterIdAsNameFirstLast));
+                            });
+
+                            absentCount = Math.Max(0, rosterCount - matchedPresentCount);
+                        }
+
+                        <div>
+                            <strong>@d.ToString("yyyy-MM-dd")</strong>: @presentCount present (from attendance file)
+                            @if (students != null && presentOnlyExport)
+                            {
+                                <span> / @matchedPresentCount matched in roster</span>
+                                <span> / @(absentCount ?? 0) absent (inferred as roster − matched present)</span>
+                            }
+                        </div>
+                    }
+
+                    @if (presentOnlyExport && students == null)
+                    {
+                        <div class="mt-1">
+                            This attendance file lists only present students. Click <strong>Load Students (roster)</strong> to infer absences from Canvas.
+                        </div>
+                    }
+                </div>
+                <button class="btn btn-sm btn-outline-danger mt-2" @onclick="ClearAttendanceRecords">
+                    Clear All Attendance Records
+                </button>
+
+                @if (absences != null && absences.Count > 0 && assignments != null && assignments.Count > 0)
+                {
+                    <div class="mt-3">
+                        <p class="text-muted mb-2">Run both actions together: apply exemptions for <strong>gewettigde</strong> absences and set <strong>0</strong> for students who were absent <strong>without</strong> a justified absence (based on attendance + roster).</p>
+                        <button class="btn btn-primary" @onclick="() => ApplyExemptionsAndZeros(false)" disabled="@isProcessing">
+                            @if (isProcessing)
+                            {
+                                <span class="spinner-border spinner-border-sm me-1"></span>
+                            }
+                            Apply exemptions + zeros
+                        </button>
+                        <button class="btn btn-outline-primary ms-2" @onclick="() => ApplyExemptionsAndZeros(true)" disabled="@isProcessing">
+                            @if (isProcessing)
+                            {
+                                <span class="spinner-border spinner-border-sm me-1"></span>
+                            }
+                            Simulate exemptions + zeros
+                        </button>
+                    </div>
+                }
+                
+                @if (assignments != null && assignments.Count > 0)
+                {
+                    var unjustifiedCount = unjustifiedAbsences?.Count ?? 0;
+
+                    <div class="alert alert-warning mt-2">
+                        Found @unjustifiedCount absences without justification (absent and not gewettigd) — these students will receive 0
+                    </div>
+
+                    <button class="btn btn-danger mt-2" @onclick="() => ApplyZerosFromAttendance(false)" disabled="@(isProcessing || unjustifiedCount == 0)">
+                        @if (isProcessing)
+                        {
+                            <span class="spinner-border spinner-border-sm me-1"></span>
+                        }
+                        Apply zeros (0) to Canvas
+                    </button>
+                    <button class="btn btn-outline-danger mt-2 ms-2" @onclick="() => ApplyZerosFromAttendance(true)" disabled="@(isProcessing || unjustifiedCount == 0)">
+                        @if (isProcessing)
+                        {
+                            <span class="spinner-border spinner-border-sm me-1"></span>
+                        }
+                        Simulate zeros (0)
+                    </button>
+
+                    <button class="btn btn-secondary mt-2 ms-2" @onclick="ToggleUnjustifiedAbsenceDetails" disabled="@(unjustifiedCount == 0)">
+                        @(showUnjustifiedDetails ? "Hide" : "Show") Details
+                    </button>
+
+                    @if (unjustifiedCount == 0)
+                    {
+                        <div class="text-muted mt-2">
+                            No absences without justification detected (based on attendance + roster + gewettigd absences).
+                        </div>
+                    }
+                    else if (showUnjustifiedDetails)
+                    {
+                        <div class="mt-3">
+                            <h6>Unjustified Absences (Students to receive 0):</h6>
+                            <div class="table-responsive" style="max-height: 300px; overflow-y: auto;">
+                                <table class="table table-sm table-bordered">
+                                    <thead class="table-light sticky-top">
+                                        <tr>
+                                            <th>Student Name</th>
+                                            <th>Student ID</th>
+                                            <th>Absence Date</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        @foreach (var absence in unjustifiedAbsences!.OrderBy(a => a.Date).ThenBy(a => a.StudentName))
+                                        {
+                                            <tr>
+                                                <td>@absence.StudentName</td>
+                                                <td>@absence.StudentId</td>
+                                                <td>@absence.Date.ToString("yyyy-MM-dd")</td>
+                                            </tr>
+                                        }
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    }
+                }
+                else
+                {
+                    <div class="text-muted mt-2">
+                        Load assignments (Step 1) to enable setting zeros (0) based on Inleverdatum.
+                    </div>
+                }
+            }
+
+            <div class="form-check mt-3">
+                <input class="form-check-input" type="checkbox" id="simulateMode" @bind="simulateMode" />
+                <label class="form-check-label" for="simulateMode">
+                    <strong>Simulation mode</strong> (only for the button below) — preview exemption changes without persisting them to Canvas
+                </label>
+            </div>
+
+            <button class="btn btn-primary mt-3" @onclick="ProcessExemptions" disabled="@(isProcessing || absences == null || assignments == null || courseId == 0)">
+                @if (isProcessing)
+                {
+                    <span class="spinner-border spinner-border-sm me-2"></span>
+                }
+                @(simulateMode ? "Simulate" : "Apply") Exemptions
+            </button>
+        </div>
+    </div>
+
+    @if (showAbsenceOverview && assignments != null && absences != null)
+    {
+        <div class="card mt-4">
+            <div class="card-body">
+                <h5 class="card-title">Overview: Gewettigd absences per assignment</h5>
+                @foreach (var assignment in assignments.Where(a => a.Inleverdatum.HasValue).OrderBy(a => a.Inleverdatum))
+                {
+                    var absentStudents = absences
+                        .Where(absence => absence.AbsenceDate.Date == assignment.Inleverdatum!.Value.Date)
+                        .ToList();
+                    
+                    <div class="mb-4">
+                        <h6 class="fw-bold">@assignment.Name</h6>
+                        <p class="text-muted mb-2">Inleverdatum: @assignment.Inleverdatum?.ToString("yyyy-MM-dd")</p>
+                        
+                        @if (absentStudents.Any())
+                        {
+                            <div class="table-responsive">
+                                <table class="table table-sm table-bordered">
+                                    <thead class="table-light">
+                                        <tr>
+                                            <th>Student Name</th>
+                                            <th>Student ID</th>
+                                            <th>Reden</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        @foreach (var student in absentStudents.OrderBy(s => s.StudentName))
+                                        {
+                                            <tr>
+                                                <td>@student.StudentName</td>
+                                                <td>@student.StudentId</td>
+                                                <td>@student.Reason</td>
+                                            </tr>
+                                        }
+                                    </tbody>
+                                </table>
+                            </div>
+                        }
+                        else
+                        {
+                            <p class="text-muted fst-italic">Geen gewettigde afwezigheden op deze datum</p>
+                        }
+                    </div>
+                }
+            </div>
+        </div>
+    }
+
+    @if (results != null && results.Count > 0)
+    {
+        <div class="card mt-4">
+            <div class="card-body">
+                <h5 class="card-title">Results</h5>
+                @if (results.Any(r => r.Message.Contains("[SIMULATION]")))
+                {
+                    <div class="alert alert-warning">
+                        <strong>⚠️ Simulation Mode:</strong> These are preview results. No changes were made to Canvas.
+                    </div>
+                }
+                <table class="table table-striped">
+                    <thead>
+                        <tr>
+                            <th>Student</th>
+                            <th>Assignment</th>
+                            <th>Date (Inleverdatum)</th>
+                            <th>Status</th>
+                            <th>Message</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var result in results)
+                        {
+                            <tr class="@(result.Success ? "table-success" : "table-warning")">
+                                <td>@result.StudentName</td>
+                                <td>@result.AssignmentName</td>
+                                <td>@result.DueDate.ToShortDateString()</td>
+                                <td>
+                                    @if (result.Success)
+                                    {
+                                        <span class="badge bg-success">Success</span>
+                                    }
+                                    else
+                                    {
+                                        <span class="badge bg-warning">Skipped</span>
+                                    }
+                                </td>
+                                <td>@result.Message</td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    }
+
+    @if (!string.IsNullOrEmpty(errorMessage))
+    {
+        <div class="alert alert-danger mt-3">
+            @errorMessage
+        </div>
+    }
+</div>
+
+@code {
+    private long courseId;
+    private List<CanvasCourse>? courses;
+    private bool isLoadingCourses = false;
+    private List<Absence>? absences;
+    private List<CanvasAssignment>? assignments;
+    private List<string> courseSectionNames = new();
+    private List<ExemptionResult>? results;
+    private List<Attendance>? attendanceRecords;
+    private List<UnjustifiedAbsence>? unjustifiedAbsences;
+    private List<CanvasStudent>? students;
+    private bool showStudentRoster = false;
+    private bool isProcessing = false;
+    private bool isLoadingAssignments = false;
+    private bool isLoadingStudents = false;
+    private bool showAbsenceOverview = false;
+    private bool showUnjustifiedDetails = false;
+    private int attendanceFilesUploaded = 0;
+    private bool simulateMode = true; // Default to simulation mode for safety
+    private string? errorMessage;
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!CanvasService.IsConfigured)
+            return;
+
+        // Load default course ID from configuration
+        var configuredCourseId = Configuration["Canvas:CourseId"];
+        if (!string.IsNullOrEmpty(configuredCourseId) && long.TryParse(configuredCourseId, out var parsedId))
+        {
+            courseId = parsedId;
+        }
+
+        await LoadCourses();
+
+        // Auto-load if a default course is configured and exists in the dropdown
+        if (courseId != 0 && courses != null && courses.Any(c => c.Id == courseId))
+        {
+            await LoadAssignments();
+            await LoadStudents();
+        }
+        else
+        {
+            courseId = 0;
+        }
+    }
+
+    private async Task LoadCourses()
+    {
+        isLoadingCourses = true;
+        errorMessage = null;
+        courses = null;
+
+        try
+        {
+            courses = await CanvasService.GetCoursesForCurrentUser();
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"Error loading courses: {ex.Message}";
+            courses = new List<CanvasCourse>();
+        }
+        finally
+        {
+            isLoadingCourses = false;
+        }
+    }
+
+    private async Task OnCourseSelected(ChangeEventArgs e)
+    {
+        if (!long.TryParse(e.Value?.ToString(), out var selectedCourseId))
+            selectedCourseId = 0;
+
+        // Reset dependent state
+        courseId = selectedCourseId;
+        results = null;
+        showAbsenceOverview = false;
+        assignments = null;
+        students = null;
+        showStudentRoster = false;
+        courseSectionNames = new();
+        unjustifiedAbsences = null;
+
+        if (courseId == 0)
+            return;
+
+        await LoadAssignments();
+        await LoadStudents();
+    }
+
+    private async Task LoadAssignments()
+    {
+        if (courseId == 0)
+            return;
+
+        isLoadingAssignments = true;
+        errorMessage = null;
+        assignments = null;
+
+        try
+        {
+            assignments = await CanvasService.GetAssignmentsForCourse(courseId);
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"Error loading assignments: {ex.Message}";
+        }
+        finally
+        {
+            isLoadingAssignments = false;
+        }
+    }
+
+    private async Task LoadStudents()
+    {
+        if (courseId == 0)
+            return;
+
+        isLoadingStudents = true;
+        errorMessage = null;
+        students = null;
+        showStudentRoster = false;
+
+        try
+        {
+            students = await CanvasService.GetStudentsForCourse(courseId);
+            courseSectionNames = ExtractSectionNames(students);
+
+            // Fill section names on already-loaded justified absences (best-effort)
+            AttachSectionNamesToAbsences();
+
+            // Recalculate unjustified absences if attendance records exist (present-only exports require roster)
+            if (attendanceRecords != null)
+            {
+                await CalculateUnjustifiedAbsencesAsync();
+            }
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"Error loading students: {ex.Message}";
+        }
+        finally
+        {
+            isLoadingStudents = false;
+        }
+    }
+
+    private static List<string> ExtractSectionNames(List<CanvasStudent>? roster)
+    {
+        if (roster == null)
+            return new List<string>();
+
+        var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var s in roster)
+        {
+            if (string.IsNullOrWhiteSpace(s.SectionName))
+                continue;
+
+            foreach (var part in s.SectionName.Split(',', StringSplitOptions.RemoveEmptyEntries))
+            {
+                var trimmed = part.Trim();
+                if (!string.IsNullOrWhiteSpace(trimmed))
+                    names.Add(trimmed);
+            }
+        }
+
+        return names.OrderBy(x => x, StringComparer.Ordinal).ToList();
+    }
+
+    private DateTime? GetAssignmentSectionDate(CanvasAssignment assignment, string section)
+    {
+        if (assignment.InleverdatumBySection == null)
+            return null;
+
+        return assignment.InleverdatumBySection.TryGetValue(section, out var d) ? d : null;
+    }
+
+    private void SetAssignmentSectionDate(CanvasAssignment assignment, string section, ChangeEventArgs e)
+    {
+        if (assignment.InleverdatumBySection == null)
+            assignment.InleverdatumBySection = new Dictionary<string, DateTime?>(StringComparer.OrdinalIgnoreCase);
+
+        if (e.Value == null)
+        {
+            assignment.InleverdatumBySection.Remove(section);
+            return;
+        }
+
+        var raw = e.Value.ToString();
+        if (string.IsNullOrWhiteSpace(raw))
+        {
+            assignment.InleverdatumBySection.Remove(section);
+            return;
+        }
+
+        if (DateTime.TryParse(raw, out var parsed))
+            assignment.InleverdatumBySection[section] = parsed.Date;
+    }
+
+    private void AttachSectionNamesToAbsences()
+    {
+        if (absences == null || students == null || students.Count == 0)
+            return;
+
+        // Map roster keys to section names (best-effort).
+        var rosterByKey = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var s in students)
+        {
+            if (!string.IsNullOrWhiteSpace(s.StudentId))
+                rosterByKey[NormalizeStudentKey(s.StudentId)] = s.SectionName;
+
+            if (!string.IsNullOrWhiteSpace(s.Email) && s.Email.Contains('@'))
+                rosterByKey[NormalizeStudentKey(s.Email.Split('@')[0])] = s.SectionName;
+        }
+
+        foreach (var a in absences)
+        {
+            if (!string.IsNullOrWhiteSpace(a.SectionName))
+                continue;
+
+            var key = NormalizeStudentKey(a.StudentId);
+            if (rosterByKey.TryGetValue(key, out var section))
+                a.SectionName = section;
+        }
+    }
+
+    private void ToggleStudentRoster()
+    {
+        showStudentRoster = !showStudentRoster;
+    }
+
+    private void GenerateAbsenceOverview()
+    {
+        showAbsenceOverview = true;
+        results = null; // Clear previous results when showing overview
+    }
+
+    private async Task ApplyExemptionsFromOverview(bool simulate)
+    {
+        if (absences == null || courseId == 0 || assignments == null)
+            return;
+
+        isProcessing = true;
+        errorMessage = null;
+        results = null;
+
+        try
+        {
+            // IMPORTANT: pass the UI-edited assignment list so Inleverdatum matches what the user selected
+            results = await CanvasService.ProcessExemptions(courseId, absences, assignments, simulate);
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"Error processing exemptions: {ex.Message}";
+        }
+        finally
+        {
+            isProcessing = false;
+        }
+    }
+
+    private async Task HandleFileSelected(InputFileChangeEventArgs e)
+    {
+        errorMessage = null;
+        absences = null;
+        
+        try
+        {
+            var file = e.File;
+            if (file != null)
+            {
+                using var stream = file.OpenReadStream(maxAllowedSize: 10 * 1024 * 1024); // 10MB max
+                using var memoryStream = new MemoryStream();
+                await stream.CopyToAsync(memoryStream);
+                memoryStream.Position = 0;
+                
+                absences = await ExcelService.ReadAbsencesFromExcel(memoryStream);
+
+                // If roster already loaded, attach section names
+                AttachSectionNamesToAbsences();
+                
+                // Recalculate unjustified absences if attendance records exist
+                if (attendanceRecords != null)
+                {
+                    await CalculateUnjustifiedAbsencesAsync();
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"Error reading Excel file: {ex.Message}";
+        }
+    }
+
+    private async Task HandleAttendanceFileSelected(InputFileChangeEventArgs e)
+    {
+        errorMessage = null;
+        
+        // Initialize attendanceRecords list if this is the first upload
+        if (attendanceRecords == null)
+        {
+            attendanceRecords = new List<Attendance>();
+            attendanceFilesUploaded = 0;
+        }
+        
+        try
+        {
+            var files = e.GetMultipleFiles(maximumFileCount: 50);
+            var newRecordsCount = 0;
+            
+            foreach (var file in files)
+            {
+                using var stream = file.OpenReadStream(maxAllowedSize: 10 * 1024 * 1024); // 10MB max
+                using var memoryStream = new MemoryStream();
+                await stream.CopyToAsync(memoryStream);
+                memoryStream.Position = 0;
+                
+                var newRecords = await ExcelService.ReadAttendanceFromExcel(memoryStream);
+                attendanceRecords.AddRange(newRecords);
+                newRecordsCount += newRecords.Count;
+                attendanceFilesUploaded++;
+            }
+            
+            // Calculate unjustified absences after adding all new records
+            await CalculateUnjustifiedAbsencesAsync();
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"Error reading attendance file(s): {ex.Message}";
+        }
+    }
+    
+    private void ClearAttendanceRecords()
+    {
+        attendanceRecords = null;
+        unjustifiedAbsences = null;
+        attendanceFilesUploaded = 0;
+    }
+
+    private async Task CalculateUnjustifiedAbsencesAsync()
+    {
+        unjustifiedAbsences = await GetUnjustifiedAbsencesAsync();
+    }
+
+    private static string NormalizeStudentKey(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            return string.Empty;
+
+        var trimmed = value.Trim();
+        var chars = trimmed
+            .Where(c => !char.IsWhiteSpace(c) && System.Globalization.CharUnicodeInfo.GetUnicodeCategory(c) != System.Globalization.UnicodeCategory.Format)
+            .ToArray();
+        return new string(chars).ToLowerInvariant();
+    }
+
+    private static string[] GetNameTokens(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            return Array.Empty<string>();
+
+        // Normalize names so "Last First" and "First Last" match:
+        // - lowercase
+        // - remove diacritics and format chars
+        // - keep only letters/digits (others become separators)
+        // - drop purely numeric tokens (e.g., "202445753")
+        // - sort tokens
+        var lower = value.Trim().ToLowerInvariant().Normalize(System.Text.NormalizationForm.FormD);
+        var sb = new System.Text.StringBuilder();
+
+        foreach (var c in lower)
+        {
+            var cat = System.Globalization.CharUnicodeInfo.GetUnicodeCategory(c);
+            if (cat == System.Globalization.UnicodeCategory.NonSpacingMark || cat == System.Globalization.UnicodeCategory.Format)
+                continue;
+
+            if (char.IsLetterOrDigit(c))
+                sb.Append(c);
+            else
+                sb.Append(' ');
+        }
+
+        return sb
+            .ToString()
+            .Split(' ', StringSplitOptions.RemoveEmptyEntries)
+            .Where(t => t.Length > 1)
+            .Where(t => !t.All(char.IsDigit))
+            .OrderBy(t => t, StringComparer.Ordinal)
+            .ToArray();
+    }
+
+    private static string NormalizeNameKey(string? value)
+    {
+        return string.Join(' ', GetNameTokens(value));
+    }
+
+    private static string NormalizeNameKeyFirstLast(string? value)
+    {
+        var tokens = GetNameTokens(value);
+        if (tokens.Length == 0)
+            return string.Empty;
+        if (tokens.Length == 1)
+            return tokens[0];
+
+        // first+last, order-insensitive
+        var first = tokens.First();
+        var last = tokens.Last();
+        return string.Join(' ', new[] { first, last }.OrderBy(t => t, StringComparer.Ordinal));
+    }
+
+    private static string NormalizeIdAsNameKey(string? studentId)
+    {
+        if (string.IsNullOrWhiteSpace(studentId))
+            return string.Empty;
+
+        // Convert IDs like "andres.fonteyne" to a comparable name key.
+        var s = studentId.Trim().ToLowerInvariant();
+        s = s.Replace('.', ' ').Replace('_', ' ').Replace('-', ' ');
+        return NormalizeNameKey(s);
+    }
+
+    private static string NormalizeIdAsNameKeyFirstLast(string? studentId)
+    {
+        if (string.IsNullOrWhiteSpace(studentId))
+            return string.Empty;
+
+        var s = studentId.Trim().ToLowerInvariant();
+        s = s.Replace('.', ' ').Replace('_', ' ').Replace('-', ' ');
+        return NormalizeNameKeyFirstLast(s);
+    }
+
+    private async Task<List<UnjustifiedAbsence>> GetUnjustifiedAbsencesAsync()
+    {
+        if (attendanceRecords == null)
+            return new List<UnjustifiedAbsence>();
+
+        var justifiedAbsences = absences ?? new List<Absence>();
+
+        // Matrix-style exports explicitly mark absence (Present=false)
+        if (attendanceRecords.Any(a => !a.Present))
+        {
+            return ExcelService.FindUnjustifiedAbsences(attendanceRecords, justifiedAbsences);
+        }
+
+        // Present-only exports (e.g., Microsoft Forms list of attendees): infer absences from Canvas roster.
+        // For safety/clarity, require the user to load the roster explicitly.
+        if (courseId == 0 || students == null || students.Count == 0)
+            return new List<UnjustifiedAbsence>();
+
+        var unjustified = new List<UnjustifiedAbsence>();
+        var dates = attendanceRecords.Select(a => a.Date.Date).Distinct().ToList();
+
+        foreach (var date in dates)
+        {
+            var presentEmailKeys = attendanceRecords
+                .Where(a => a.Date.Date == date && a.Present)
+                .Select(a => NormalizeStudentKey(a.StudentId))
+                .Where(id => !string.IsNullOrWhiteSpace(id))
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+            // Build name-key sets from attendance for matching against Canvas roster
+            var presentNameKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var a in attendanceRecords.Where(a => a.Date.Date == date && a.Present))
+            {
+                var full = NormalizeNameKey(a.StudentName);
+                var firstLast = NormalizeNameKeyFirstLast(a.StudentName);
+
+                if (!string.IsNullOrWhiteSpace(full))
+                    presentNameKeys.Add(full);
+                if (!string.IsNullOrWhiteSpace(firstLast))
+                    presentNameKeys.Add(firstLast);
+            }
+
+            var justifiedIdKeys = justifiedAbsences
+                .Where(a => a.AbsenceDate.Date == date)
+                .Select(a => NormalizeStudentKey(a.StudentId))
+                .Where(id => !string.IsNullOrWhiteSpace(id))
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+            var justifiedNameKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var a in justifiedAbsences.Where(a => a.AbsenceDate.Date == date))
+            {
+                var full = NormalizeNameKey(a.StudentName);
+                var firstLast = NormalizeNameKeyFirstLast(a.StudentName);
+
+                if (!string.IsNullOrWhiteSpace(full))
+                    justifiedNameKeys.Add(full);
+                if (!string.IsNullOrWhiteSpace(firstLast))
+                    justifiedNameKeys.Add(firstLast);
+            }
+
+            foreach (var s in students)
+            {
+                var rosterEmailPrefix = (!string.IsNullOrWhiteSpace(s.Email) && s.Email.Contains('@'))
+                    ? NormalizeStudentKey(s.Email.Split('@')[0])
+                    : string.Empty;
+
+                var rosterNameKey = NormalizeNameKey(s.StudentName);
+                var rosterNameFirstLast = NormalizeNameKeyFirstLast(s.StudentName);
+
+                var rosterIdAsName = NormalizeIdAsNameKey(s.StudentId);
+                var rosterIdAsNameFirstLast = NormalizeIdAsNameKeyFirstLast(s.StudentId);
+
+                var isPresent = (!string.IsNullOrWhiteSpace(rosterEmailPrefix) && presentEmailKeys.Contains(rosterEmailPrefix))
+                                || (!string.IsNullOrWhiteSpace(rosterNameKey) && presentNameKeys.Contains(rosterNameKey))
+                                || (!string.IsNullOrWhiteSpace(rosterNameFirstLast) && presentNameKeys.Contains(rosterNameFirstLast))
+                                || (!string.IsNullOrWhiteSpace(rosterIdAsName) && presentNameKeys.Contains(rosterIdAsName))
+                                || (!string.IsNullOrWhiteSpace(rosterIdAsNameFirstLast) && presentNameKeys.Contains(rosterIdAsNameFirstLast));
+
+                if (isPresent)
+                    continue;
+
+                // not present => absent; now exclude "gewettigd" students
+                var isJustified = (!string.IsNullOrWhiteSpace(rosterEmailPrefix) && justifiedIdKeys.Contains(rosterEmailPrefix))
+                                  || (!string.IsNullOrWhiteSpace(rosterNameKey) && justifiedNameKeys.Contains(rosterNameKey))
+                                  || (!string.IsNullOrWhiteSpace(rosterNameFirstLast) && justifiedNameKeys.Contains(rosterNameFirstLast));
+
+                if (isJustified)
+                    continue;
+
+                // Use a Canvas-searchable key for later updates.
+                // Prefer roster email prefix; otherwise fall back to whatever id we got from Canvas.
+                var keyForCanvas = !string.IsNullOrWhiteSpace(rosterEmailPrefix)
+                    ? rosterEmailPrefix
+                    : NormalizeStudentKey(s.StudentId);
+
+                if (string.IsNullOrWhiteSpace(keyForCanvas))
+                    continue;
+
+                unjustified.Add(new UnjustifiedAbsence
+                {
+                    StudentId = keyForCanvas,
+                    StudentName = s.StudentName,
+                    Date = date,
+                    SectionName = s.SectionName
+                });
+            }
+        }
+
+        return unjustified;
+    }
+
+    private void ToggleUnjustifiedAbsenceDetails()
+    {
+        showUnjustifiedDetails = !showUnjustifiedDetails;
+    }
+
+    private async Task ApplyZerosFromAttendance(bool simulate)
+    {
+        if (unjustifiedAbsences == null || unjustifiedAbsences.Count == 0 || courseId == 0 || assignments == null)
+            return;
+
+        isProcessing = true;
+        errorMessage = null;
+        results = null;
+
+        try
+        {
+            results = await CanvasService.ProcessZeros(courseId, unjustifiedAbsences, assignments, simulate);
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"Error applying zeros: {ex.Message}";
+        }
+        finally
+        {
+            isProcessing = false;
+        }
+    }
+
+    private async Task ApplyExemptionsAndZeros(bool simulate)
+    {
+        if (absences == null || absences.Count == 0 || attendanceRecords == null || attendanceRecords.Count == 0 || courseId == 0 || assignments == null)
+            return;
+
+        isProcessing = true;
+        errorMessage = null;
+        results = null;
+
+        try
+        {
+            // Ensure we have an up-to-date unjustified list based on current attendance + justified absences
+            var localUnjustified = await GetUnjustifiedAbsencesAsync();
+
+            var exemptionResults = await CanvasService.ProcessExemptions(courseId, absences, assignments, simulate);
+            var zeroResults = localUnjustified.Count > 0
+                ? await CanvasService.ProcessZeros(courseId, localUnjustified, assignments, simulate)
+                : new List<ExemptionResult>();
+
+            // Prefix messages so the combined results table is easy to scan
+            foreach (var r in exemptionResults)
+            {
+                r.Message = $"[EXEMPTION] {r.Message}";
+            }
+            foreach (var r in zeroResults)
+            {
+                r.Message = $"[ZERO] {r.Message}";
+            }
+
+            results = new List<ExemptionResult>();
+            results.AddRange(exemptionResults);
+            results.AddRange(zeroResults);
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"Error processing exemptions/zeros: {ex.Message}";
+        }
+        finally
+        {
+            isProcessing = false;
+        }
+    }
+
+    private async Task ProcessExemptions()
+    {
+        if (absences == null || courseId == 0 || assignments == null)
+            return;
+
+        isProcessing = true;
+        errorMessage = null;
+        results = null;
+
+        try
+        {
+            // IMPORTANT: pass the UI-edited assignment list so Inleverdatum matches what the user selected
+            results = await CanvasService.ProcessExemptions(courseId, absences, assignments, simulateMode);
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"Error processing exemptions: {ex.Message}";
+        }
+        finally
+        {
+            isProcessing = false;
+        }
+    }
+}

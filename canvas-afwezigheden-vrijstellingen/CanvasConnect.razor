@@ -1,0 +1,102 @@
+@using CanvasAfwezighedenVrijstellingen.Services
+@inject CanvasService CanvasService
+@inject IConfiguration Configuration
+
+@if (!CanvasService.IsConfigured || isEditing)
+{
+    <div class="card mt-4">
+        <div class="card-body">
+            <h5 class="card-title">Stap 0: Verbinden met Canvas</h5>
+            <p class="text-muted">
+                Vul de URL van je Canvas-instantie en een API-token in. Het token blijft alleen in het
+                geheugen van dit tabblad en wordt nergens opgeslagen.
+            </p>
+
+            <div class="mb-3">
+                <label for="instanceUrl" class="form-label">Canvas URL</label>
+                <input id="instanceUrl" type="text" class="form-control" @bind="instanceUrl"
+                       placeholder="https://arteveldehogeschool.instructure.com" />
+            </div>
+
+            <div class="mb-3">
+                <label for="apiToken" class="form-label">API-token</label>
+                <input id="apiToken" type="password" class="form-control" @bind="apiToken"
+                       autocomplete="off" placeholder="PLAK_HIER_JE_TOKEN" />
+                <div class="form-text">Account &rarr; Instellingen &rarr; Ge&iuml;ntegreerde toegang &rarr; Nieuw token.</div>
+            </div>
+
+            @if (!string.IsNullOrWhiteSpace(errorMessage))
+            {
+                <div class="alert alert-danger py-2">@errorMessage</div>
+            }
+
+            <button class="btn btn-primary" type="button" @onclick="ConnectAsync" disabled="@isBusy">
+                @if (isBusy)
+                {
+                    <span class="spinner-border spinner-border-sm me-1"></span>
+                }
+                Verbinden
+            </button>
+        </div>
+    </div>
+}
+else
+{
+    <div class="alert alert-success d-flex justify-content-between align-items-center mt-4 py-2">
+        <span>
+            Verbonden met <strong>@CanvasService.InstanceUrl</strong>
+            @if (!string.IsNullOrWhiteSpace(connectedAs))
+            {
+                <text> als <strong>@connectedAs</strong></text>
+            }
+        </span>
+        <button class="btn btn-sm btn-outline-secondary" type="button" @onclick="StartEditing">
+            Wijzig verbinding
+        </button>
+    </div>
+}
+
+@code {
+    [Parameter] public EventCallback OnConnected { get; set; }
+
+    private string instanceUrl = string.Empty;
+    private string apiToken = string.Empty;
+    private string? errorMessage;
+    private string? connectedAs;
+    private bool isBusy;
+    private bool isEditing;
+
+    protected override void OnInitialized()
+    {
+        instanceUrl = (Configuration["Canvas:ApiUrl"] ?? string.Empty)
+            .Replace("/api/v1", "", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private void StartEditing()
+    {
+        isEditing = true;
+        errorMessage = null;
+    }
+
+    private async Task ConnectAsync()
+    {
+        isBusy = true;
+        errorMessage = null;
+
+        try
+        {
+            CanvasService.Configure(instanceUrl, apiToken);
+            connectedAs = await CanvasService.TestConnectionAsync();
+            isEditing = false;
+            await OnConnected.InvokeAsync();
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"Verbinden mislukt: {ex.Message}";
+        }
+        finally
+        {
+            isBusy = false;
+        }
+    }
+}
